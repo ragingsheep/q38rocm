@@ -1,6 +1,6 @@
 # Qwen 3.8 27B ROCmFP4_FAST on AMD Strix Halo (Ryzen AI Max+ 395)
 
-> 📦 **Dedicated Model Project:** This repository is the dedicated deep-dive project for **Qwen 3.8 27B** on AMD Strix Halo. For the unified multi-model server (Nemotron 3.5 30B, Ornith 35B, DeepSeek V4 Flash 284B, hot-swapping) and support for other AMD GPUs (like the **Radeon RX 9070 XT**), visit the **[rocmfpx-server](https://github.com/julianmb/rocmfpx-server)** repository.
+> 📦 **Dedicated Model Project:** This repository is the dedicated deep-dive project for **Qwen 3.8 27B** on AMD Strix Halo. For the unified multi-model server (Nemotron 3.5 30B, Ornith 35B, DeepSeek V4 Flash 284B, hot-swapping) and support for other AMD Radeon GPUs depending on available VRAM, visit the **[rocmfpx-server](https://github.com/julianmb/rocmfpx-server)** repository.
 
 [![Hugging Face](https://img.shields.io/badge/🤗%20Hugging%20Face-julianmb%2FQwen--3.8--27B--ROCmFP4--FAST--GGUF-ffd21e.svg)](https://huggingface.co/julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF)
 [![Hardware](https://img.shields.io/badge/Hardware-AMD_Strix_Halo_(gfx1151)-ED1C24?logo=amd)](https://www.amd.com)
@@ -302,6 +302,24 @@ Connect your local developer tools and IDEs directly to the OpenAI-compatible AP
 - **LiteLLM / Python SDK:** Multi-agent pipelines and unified proxying.
 
 👉 **See the complete [Client Integration Guide (docs/CLIENT_INTEGRATION.md)](docs/CLIENT_INTEGRATION.md)** for step-by-step setup guides and configuration snippets.
+
+---
+
+## 🐳 Docker Deployment Options (Linux & Windows WSL2)
+
+You can run Qwen 3.8 27B in a container with full AMD GPU passthrough on **Linux** or **Windows (Docker Desktop with WSL2 backend)**:
+
+```bash
+# Option A: Standalone High-Performance Server
+docker compose up -d
+
+# Option B: Server + Open WebUI Chat Browser
+docker compose --profile webui up -d
+```
+
+👉 **See the complete [Docker Deployment Guide (docs/DOCKER_GUIDE.md)](docs/DOCKER_GUIDE.md)** for Windows WSL2 prerequisites, device passthrough, and direct `docker run` commands.
+
+*(For multi-model serving across Nemotron, Ornith, and DeepSeek, see the [rocmfpx-server](https://github.com/julianmb/rocmfpx-server) container stack).*
 
 ---
 
