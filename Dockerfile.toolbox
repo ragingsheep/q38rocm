@@ -1,66 +1,64 @@
-FROM registry.fedoraproject.org/fedora-minimal:44
+FROM docker.io/kyuz0/amd-strix-halo-toolboxes:rocm-7.14-rocmfpx
 
 LABEL maintainer="q38rocm-toolbox"
 LABEL description="Q38 ROCmFPX Toolbx for AMD Strix Halo"
 
+USER root
+
+WORKDIR /app
+
+# q38 / Strix Halo settings
 ENV HSA_OVERRIDE_GFX_VERSION=11.5.1
 ENV GGML_HIP_ENABLE_UNIFIED_MEMORY=1
 ENV HIP_VISIBLE_DEVICES=0
 ENV ROCM_FLUSH_ACCEPT=1
 
+# Prefer Mesa RADV for Vulkan
 ENV AMD_VULKAN_ICD=RADV
 ENV RADV_PERFTEST="gpl,sam,nggc"
 
-ENV PATH="/app/engine/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/app/engine/bin:${LD_LIBRARY_PATH}"
-
-WORKDIR /app
-
+# Install q38 helper/runtime dependencies and RADV Vulkan stack
 RUN microdnf -y --nodocs --setopt=install_weak_deps=0 install \
-    bash \
-    ca-certificates \
     curl \
     git \
-    libatomic \
-    libstdc++ \
-    libgcc \
-    libgomp \
-    libibverbs \
-    vulkan-loader \
-    vulkan-loader-devel \
-    vulkan-tools \
-    mesa-vulkan-drivers \
-    radeontop \
-    procps-ng \
-    pciutils \
     python3 \
     python3-pip \
     tar \
     gzip \
+    vulkan-loader \
+    vulkan-tools \
+    mesa-vulkan-drivers \
     && microdnf clean all \
     && rm -rf /var/cache/dnf/*
 
-# Download Julian's ROCmFPX engine
+# Install Julian's pinned/prebuilt ROCmFPX engine
 RUN mkdir -p /app/engine && \
     curl -fL \
       "https://github.com/julianmb/q38rocm/releases/download/v1.0.0/strix-halo-rocmfpx-engine-v1.0.0-linux-x86_64.tar.gz" \
       -o /tmp/engine.tar.gz && \
     echo "bbc7845db0c012b97f1c9b8a2733a7083c6f9a749a453866fbe1994151d3364f  /tmp/engine.tar.gz" \
       | sha256sum -c - && \
-    echo "Extracting ROCmFPX engine..." && \
-    tar -xvzf /tmp/engine.tar.gz -C /tmp/ && \
-    echo "Installing ROCmFPX engine..." && \
+    tar -xzf /tmp/engine.tar.gz -C /tmp/ && \
     cp -a /tmp/strix-halo-rocmfpx-engine/. /app/engine/ && \
     rm -rf /tmp/strix-halo-rocmfpx-engine /tmp/engine.tar.gz
 
+# Julian's engine takes precedence over the llama.cpp already in the kyuz0 image
+ENV PATH="/app/engine/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/app/engine/bin:${LD_LIBRARY_PATH}"
+
+# Fail the GitHub build immediately if the prebuilt engine has unresolved libraries
+RUN ldd /app/engine/bin/llama-server | tee /tmp/llama-server-ldd.txt && \
+    ! grep -q "not found" /tmp/llama-server-ldd.txt
+
+# q38 scripts
 COPY requirements.txt /app/
 
 RUN pip3 install --no-cache-dir -r /app/requirements.txt || true
 
 COPY . /app/
 
-RUN chmod +x /app/*.sh \
-    /app/scripts/*.sh \
-    /app/scripts/*.py
+RUN chmod +x /app/*.sh && \
+    find /app/scripts -type f -name "*.sh" -exec chmod +x {} \; && \
+    find /app/scripts -type f -name "*.py" -exec chmod +x {} \;
 
 CMD ["/bin/bash"]
