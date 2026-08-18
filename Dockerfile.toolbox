@@ -1,0 +1,64 @@
+FROM ubuntu:24.04
+
+LABEL maintainer="q38rocm-toolbox"
+LABEL description="Q38 ROCmFPX Toolbx for AMD Strix Halo"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Strix Halo / ROCmFPX
+ENV HSA_OVERRIDE_GFX_VERSION=11.5.1
+ENV GGML_HIP_ENABLE_UNIFIED_MEMORY=1
+ENV HIP_VISIBLE_DEVICES=0
+ENV ROCM_FLUSH_ACCEPT=1
+
+# Mesa RADV Vulkan
+ENV AMD_VULKAN_ICD=RADV
+ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json
+ENV RADV_PERFTEST="gpl,sam,nggc"
+
+ENV PATH="/app/engine/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/app/engine/bin:${LD_LIBRARY_PATH}"
+
+WORKDIR /app
+
+# Toolbx + q38 runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    sudo \
+    passwd \
+    procps \
+    pciutils \
+    vulkan-tools \
+    mesa-vulkan-drivers \
+    libvulkan1 \
+    libgomp1 \
+    python3 \
+    python3-pip \
+    python3-venv \
+    tar \
+    && rm -rf /var/lib/apt/lists/*
+
+# Julian's prebuilt ROCmFPX Strix Halo engine
+RUN mkdir -p /app/engine && \
+    curl -L \
+      "https://github.com/julianmb/q38rocm/releases/download/v1.0.0/strix-halo-rocmfpx-engine-v1.0.0-linux-x86_64.tar.gz" \
+      -o /tmp/engine.tar.gz && \
+    tar -xzf /tmp/engine.tar.gz -C /tmp/ && \
+    cp -a /tmp/strix-halo-rocmfpx-engine/* /app/engine/ && \
+    rm -rf /tmp/strix-halo-rocmfpx-engine /tmp/engine.tar.gz
+
+COPY . /app/
+
+RUN chmod +x /app/*.sh && \
+    find /app/scripts -type f -name "*.sh" -exec chmod +x {} \; && \
+    find /app/scripts -type f -name "*.py" -exec chmod +x {} \;
+
+RUN pip3 install \
+    --break-system-packages \
+    --no-cache-dir \
+    -r /app/requirements.txt
+
+CMD ["/bin/bash"]
