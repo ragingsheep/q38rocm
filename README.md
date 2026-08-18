@@ -1,6 +1,6 @@
 # Qwen 3.8 27B ROCmFP4_FAST on AMD Strix Halo (Ryzen AI Max+ 395)
 
-> 📦 **Dedicated Model Project:** This repository is the dedicated deep-dive project for **Qwen 3.8 27B** on AMD Strix Halo. For the unified multi-model server (Nemotron 3.5 30B, Ornith 35B, DeepSeek V4 Flash 284B, hot-swapping) and support for other AMD Radeon GPUs depending on available VRAM, visit the **[rocmfpx-server](https://github.com/julianmb/rocmfpx-server)** repository.
+> 📦 **Dedicated Model Project:** This repository is the dedicated deep-dive project for **Qwen 3.8 27B** on AMD Strix Halo. For the unified multi-model server (Nemotron 3.5 30B, Ornith 35B, DeepSeek V4 Flash 284B, hot-swapping) and support for other AMD Radeon GPUs depending on available VRAM, visit the **[HaloFPX](https://github.com/julianmb/halofpx)** repository.
 
 [![Hugging Face](https://img.shields.io/badge/🤗%20Hugging%20Face-julianmb%2FQwen--3.8--27B--ROCmFP4--FAST--GGUF-ffd21e.svg)](https://huggingface.co/julianmb/Qwen-3.8-27B-ROCmFP4-FAST-GGUF)
 [![Hardware](https://img.shields.io/badge/Hardware-AMD_Strix_Halo_(gfx1151)-ED1C24?logo=amd)](https://www.amd.com)
@@ -26,7 +26,7 @@ By combining **ROCmFP4 block quantization (4.26 bpw)**, **MTP (Multi-Token Predi
 - [Integration with Upstream ROCmFPX](#-integration-with-upstream-rocmfpx)
 - [Performance Matrix & Benchmarks](#-performance-matrix--benchmarks)
 - [Context Scaling & Memory Budget](#-context-scaling--memory-budget)
-- [Heterogeneous Architecture: iGPU + NPU](#-heterogeneous-architecture-igpu--xdna-2-npu-sidecar)
+- [Optional: AMD XDNA 2 NPU Acceleration](#-optional-amd-xdna-2-npu-acceleration)
 - [Backend Crossover Rule](#-backend-crossover-rule)
 - [Quick Start Guide](#-quick-start)
 - [Building the Engine](#-building-the-engine)
@@ -145,8 +145,11 @@ All benchmark results below were measured directly on **AMD Ryzen AI Max+ 395 (4
 
 | Workload Type | Optimal Profile | Recommended Launch Flags | Measured Single-Slot TPS | Measured Aggregate TPS |
 |---|---|---|---|---|
-| **Single-User Interactive Chat** | `n5 / p0.50` | `./run_server.sh --draft-n 5 --draft-p 0.50` | 🔥 **28.59 – 36.04 tok/s** | **28.59 – 36.04 tok/s** |
+| **Single-User Sustained Decode (Sweet Spot)** | `n4 / p0.0` | `./run_server.sh --draft-n 4 --draft-p 0.0 --no-mmap -ub 2048 --reasoning off` | 🔥 **33.80 tok/s sustained** (2.40× over baseline) | **33.80 tok/s** |
+| **Single-User Interactive Chat (Burst)** | `n5 / p0.50` | `./run_server.sh --draft-n 5 --draft-p 0.50` | 🔥 **28.59 – 36.04 tok/s** | **28.59 – 36.04 tok/s** |
 | **Parallel Multi-Agent Slots (4-Way)** | `n6 / p0.60` | `./run_server.sh --slots 4 --draft-n 6 --draft-p 0.60` | **12.4 – 16.7 tok/s / slot** | 🔥 **23.15 (sustained) – 40.50 (burst) tok/s** |
+
+> 💡 **MTP Depth (`K`) Scaling Insight:** Empirical sweeps show `K=4` is the optimal single-stream sweet spot on Strix Halo. `K=6` regresses slightly due to bus saturation, and `K=8` causes severe rollback degradation (18.2 tok/s). For 4-slot parallel concurrency, `K=6 / p0.60` maintains higher shared-slot throughput.
 
 *Community Validation: 4 concurrent 131K slots run continuously under thermal soak at 71.88°C with zero GPU resets or OOM events (credit: MrWidmoreHK & kujetic).*
 
@@ -196,33 +199,49 @@ Thanks to **Asymmetric TurboQuant KV cache** (`-ctk q8_0 -ctv turbo4`) and Qwen 
 
 ---
 
-## 🧠 Heterogeneous Architecture: iGPU + XDNA 2 NPU Sidecar
+## 🧠 Optional: AMD XDNA 2 NPU Acceleration
 
-AMD Strix Halo integrates a **50 TOPS XDNA 2 NPU** at `/dev/accel/accel0` (`amdxdna` kernel module).
+> **Note:** NPU acceleration is **fully optional** — the server runs great without it. The NPU does **not** improve sustained decode speed; it helps first-token latency and background routing. See the full technical report in [`docs/NPU_INTEGRATION.md`](docs/NPU_INTEGRATION.md).
 
+> ⚠️ **Scope note:** All NPU findings below were **only tested on Qwen 3.8 27B** (dense, ROCmFP4_FAST).
+
+AMD Strix Halo integrates a **50 TOPS XDNA 2 NPU** at `/dev/accel/accel0` (`amdxdna` kernel module). After extensive empirical benchmarking (`npuhalo` research workspace), here is the definitive verdict:
+
+### Measured Findings
+
+| Configuration | Prefill | Decode | TTFT (long prompt) |
+|---|---|---|---|
+| iGPU only (no MTP) | 101.4 tok/s | 14.1 tok/s | ~1800 ms |
+| **iGPU + embedded MTP (K=4)** | 74.6 tok/s | **33.8 tok/s** | 1587 ms |
+| **Hybrid NPU-burst → iGPU** | **>370 tok/s** | 33.8 tok/s | **870 ms** *(1.8× faster)* |
+| NPU standalone drafter (0.8B) | 42.9 tok/s | — | 347 ms |
+
+### What the NPU is actually good for
+1. **1.8× faster first token on long prompts** (870 ms vs 1587 ms) — the NPU bursts the prompt prefix while the iGPU loads weights.
+2. **~2 W always-on intent routing** (chat/code/translation classifier) with zero iGPU contention.
+3. It does **not** help sustained decode — any separate drafter loses to the model's own embedded MTP heads, which share weights with zero extra memory traffic.
+
+### Installation (optional)
+
+```bash
+# 1. Enable IOMMU SVA (requires reboot)
+sudo sed -i 's/amd_iommu=off/iommu=pt iommu.passthrough=0/g' /etc/default/grub
+sudo update-grub && sudo reboot
+
+# 2. Install XRT (built from /home/user/source/q38rocm/xdna-driver)
+source /opt/xilinx/xrt/setup.sh
+xrt-smi examine          # should list "RyzenAI-npu5 / aie2p"
+
+# 3. NPU inference runtime comes via Lemonade's FastFlowLM (flm) backend
+lemonade backends install flm:npu
+lemonade pull qwen3.5-0.8b-FLM
+lemonade load qwen3.5-0.8b-FLM
+
+# 4. Run the hybrid pipeline (NPU burst -> iGPU handoff) for the 1.8x TTFT gain
+python3 scripts/run_pipeline.py --device Vulkan0 --draft-n 4
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        AMD STRIX HALO (128 GB UMA)                     │
-│                                                                        │
-│   ┌──────────────────────────┐         ┌──────────────────────────┐    │
-│   │   XDNA 2 NPU (50 TOPS)   │         │    Radeon 8060S iGPU     │    │
-│   │    /dev/accel/accel0     │         │   40 CUs (KHR_coopmat)   │    │
-│   │                          │         │                          │    │
-│   │   Small Drafter Model    │  Draft  │   Target 27B Verifier    │    │
-│   │  (0.6B / 1.2B / Head)    │ Tokens  │ (Qwen 3.8 ROCmFP4 / Q3)  │    │
-│   │   Runs in Tile SRAM      │ ──────> │  Consumes 273 GB/s Bus   │    │
-│   └──────────────────────────┘         └──────────────────────────┘    │
-│                 │                                    │                 │
-│                 └──────────────┬─────────────────────┘                 │
-│                                │ Zero-Contention Pipeline              │
-│                                ▼                                       │
-│                +3.29% Main Latency Interference*                       │
-│                (vs +68.96% if draft runs on iGPU)                      │
-└────────────────────────────────────────────────────────────────────────┘
-```
-*\*NPU sidecar memory bus contention figures (+3.29% vs +68.96%) sourced from the [ciru-ai GMKtec EVO-X2 Strix Halo community artifact](https://github.com/ciru-ai/strix-halo-evo-x2-evidence).*
 
-- **Zero Memory Contention:** The NPU executes drafter models inside local Tile SRAM buffers, keeping 100% of the 273 GB/s unified memory bus dedicated to 27B target verification on the Radeon 8060S.
+See [`docs/NPU_INTEGRATION.md`](docs/NPU_INTEGRATION.md) for the complete setup, the hybrid burst pipeline, and the negative results that shaped this design.
 
 ---
 
@@ -319,7 +338,7 @@ docker compose --profile webui up -d
 
 👉 **See the complete [Docker Deployment Guide (docs/DOCKER_GUIDE.md)](docs/DOCKER_GUIDE.md)** for Windows WSL2 prerequisites, device passthrough, and direct `docker run` commands.
 
-*(For multi-model serving across Nemotron, Ornith, and DeepSeek, see the [rocmfpx-server](https://github.com/julianmb/rocmfpx-server) container stack).*
+*(For multi-model serving across Nemotron, Ornith, and DeepSeek, see the [HaloFPX](https://github.com/julianmb/halofpx) container stack).*
 
 ---
 
@@ -409,8 +428,11 @@ Qwen 3.8 defaults to high reasoning depth. If an open-ended query produces thous
     ├── benchmark.py           # Multi-stage automated benchmark runner
     ├── tune_mtp.py            # Automated MTP parameter sweep optimizer
     ├── convert_and_quant.sh   # ROCmFP4 quantization script
+    ├── run_pipeline.py        # Hybrid NPU-burst -> iGPU pipeline (1.8x TTFT, optional)
+    ├── launch_pipeline.py     # Daemonize launcher for the hybrid pipeline
     └── npu_sidecar_drafter.py # AMD XDNA 2 NPU sidecar orchestrator & simulator
 ```
+> 📘 **NPU research:** See [`docs/NPU_INTEGRATION.md`](docs/NPU_INTEGRATION.md) for the optional XDNA 2 NPU acceleration guide and full empirical findings.
 
 ---
 
