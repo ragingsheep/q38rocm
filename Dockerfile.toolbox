@@ -41,6 +41,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tar \
     && rm -rf /var/lib/apt/lists/*
 
+# Ubuntu 24.04 reserves UID/GID 1000 for the built-in "ubuntu" user.
+# Toolbx needs these IDs available to mirror the host user.
+RUN if getent passwd ubuntu >/dev/null; then \
+        userdel -r ubuntu; \
+    fi && \
+    if getent group ubuntu >/dev/null; then \
+        groupdel ubuntu; \
+    fi
+
 # Julian's prebuilt ROCmFPX Strix Halo engine
 RUN mkdir -p /app/engine && \
     curl -L \
