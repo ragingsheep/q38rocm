@@ -13,7 +13,6 @@ ENV ROCM_FLUSH_ACCEPT=1
 
 # Mesa RADV Vulkan
 ENV AMD_VULKAN_ICD=RADV
-ENV VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json
 ENV RADV_PERFTEST="gpl,sam,nggc"
 
 ENV PATH="/app/engine/bin:${PATH}"
